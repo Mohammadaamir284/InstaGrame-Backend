@@ -7,7 +7,7 @@ const port = process.env.PORT || 8000
 const app = express()
 
 app.use(cors({
-    origin: process.env.FRONT_PORT,
+    origin: process.env.FRONT_PORT || 'http://localhost:5173',
     credentials: true
 }));
 
@@ -16,7 +16,7 @@ const User = require('./models/userschema')
 const Image = require('./models/imageSchema')
 const Contact = require('./models/contactSchema')
 const authPost = require('./middelware/index')
-
+const Saved = require('./models/savedSchema')
 
 app.use(express.json())
 app.use(express.urlencoded({ extended: false }))
@@ -47,7 +47,7 @@ app.post('/api/register', async (req, res) => {
             { expiresIn: '1d' }
         )
         res.status(201).json({
-            message: 'User successfully registered',
+            message: `${user.username} successfully registered`,
             token,
             user: {
                 id: user._id,
@@ -56,7 +56,6 @@ app.post('/api/register', async (req, res) => {
                 pic: user.pic
             }
         });
-
     } catch (error) {
         res.status(500).send('/api/register', error)
     }
@@ -67,11 +66,11 @@ app.post('/api/login', async (req, res) => {
         const { email, password, pic } = req.body;
         const user = await User.findOne({ email });
         if (!user) {
-            res.status(400).send('Email Or Password Is Invalid')
+            res.status(400).send({ message: 'Email Or Password Is Invalid' })
         } else {
             const dcrypt = await bcrypt.compare(password, user.password)
             if (!dcrypt) {
-                res.status(400).send('Email Or Password Is Invalid')
+                res.status(400).send({ message: 'Email Or Password Is Invalid' })
             } else {
                 const paylord = {
                     id: user._id,
@@ -84,7 +83,7 @@ app.post('/api/login', async (req, res) => {
                     { expiresIn: 86400 },
                     (err, token) => {
                         if (err) res.json({ message: err })
-                        res.status(201).send({ user, token });
+                        res.status(201).send({ user, token, message: `${user.username} successfully registered` });
                     }
                 )
             }
@@ -104,12 +103,51 @@ app.post('/api/post', authPost, async (req, res) => {
             user: req.user._id
         });
         await post.save();
-        res.status(200).send('Create Post Succesfully')
+        res.status(200).send({ message: 'Create Post Succesfully' })
 
     } catch (error) {
         res.status(500).send('Something went wrong');
     }
 })
+
+app.post('/api/saved', authPost, async (req, res) => {
+    try {
+        const { image, mediaType, user, likes = [] } = req.body;
+        const post = new Saved({
+            image,
+            mediaType,
+            user,
+            likes
+        });
+        await post.save();
+        res.status(200).send({
+            message: 'Post saved successfully',
+            post
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: 'Something went wrong' });
+    }
+});
+
+app.get('/api/saved/:username', authPost, async (req, res) => {
+    try {
+        const { username } = req.params;
+        const { user: adminFollow } = req;
+        const [user] = await User.find({ username });
+        const posts = await Saved.find({ user: user._id }).sort({ '_id': -1 });
+        const [isFollow] = await Contact.find({ adminFollow: adminFollow._id, userFollowed: user._id })
+        const userDetail = {
+            user: user._id,
+            username: user.username,
+            email: user.email,
+            pic: user.pic
+        };
+        res.status(200).json({ posts, userDetail, isFollow: !!isFollow });
+    } catch (error) {
+        res.status(500).send('Something went wrong');
+    }
+});
 
 app.get('/api/post', authPost, async (req, res) => {
     try {
@@ -173,7 +211,7 @@ app.get('/api/following/:id', authPost, async (req, res) => {
         if (!id) return res.status(400).send('User ID is required');
         const adminfollow = await Contact.find({ adminFollow: id }).populate('userFollowed', 'username email pic');
         const userfollowed = await Contact.find({ userFollowed: id }).populate('adminFollow', 'username email pic');
-        res.status(200).json({ adminfollow, userfollowed});
+        res.status(200).json({ adminfollow, userfollowed });
     } catch (error) {
         res.status(500).send('Something went wrong');
     }
@@ -216,8 +254,8 @@ app.delete('/api/unlikes', authPost, async (req, res) => {
         if (!id) return res.status(400).send('ID not Found')
         const update = await Image.updateOne({ _id: id }, {
             $pull: { likes: user._id }
-        })       
-         res.status(200).json({ isLikes: false })
+        })
+        res.status(200).json({ isLikes: false })
     } catch (error) {
         res.status(500).send('Something went wrong');
     }
